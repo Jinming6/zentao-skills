@@ -60,6 +60,20 @@ zentao file create --file=/path/to/screenshot.png --objectType=bug --objectID=42
 
 上传成功不代表附件已经作为图片嵌入对象正文；根据返回结果核实用户要求的关联和展示方式。
 
+## 编辑对象与附件
+
+编辑（update）会走服务端编辑流程，副作用不止字段本身。ZenTao 22.6 实测有三条：
+
+- **任何 update 都会把当前账号上传的文件改绑到该对象**：无论请求体里有没有正文，`zt_file.objectID` 都会被改成该对象。原本挂在别的单上的图随即裂掉，并出现在本单附件区；连续改多个单时，最后一次 update 会把前面单的图都抢走。
+- **不带正文的 update 会把已有占位符编码**：`steps` 里的 `{png.N}` 会被序列化成 `%7Bpng.N%7D`，页面裂图，且 API 写不回原样。
+- **正文图片必须用绝对 URL 引用**：`<img src="http://<zentao-host>/zentao/file-read-<fileID>.png">`。相对路径 `/zentao/file-read-<fileID>.png` 会被服务端规范成 `{png.<fileID>}`，而页面只认 `{<fileID>.png}`，浏览器最后把它当相对地址请求，同样裂图；直接写 `{png.N}` / `{N.png}` 则会被编码成 `%7B...%7D`。
+
+因此：
+
+- 状态动作（resolve / close / start / finish）执行完不要再回头补字段。
+- 确实要改正文时，一次 update 带完整正文，图片全部写成绝对 URL；改完用 `zentao bug get <id>` 复核本单正文与附件，并抽查本次涉及的其他单附件有没有被抢走。
+- 已裂图的恢复：**先完成所有 update**，再 `zentao file create --file=... --objectType=bug --objectID=<id>` 重传原图，拿到新 fileID 后把正文图片改成绝对 URL 引用。顺序反了会被下一次 update 抢走。
+
 ## 删除与批量结果
 
 删除前落实对象 ID 和授权范围；用户已明确授权这一组对象时一次执行，不逐条重复询问。非交互、JSON/raw 或 `--machine-readable` 模式均要求显式 `--yes`；这个参数只跳过 CLI 提示，不扩展用户授权。
